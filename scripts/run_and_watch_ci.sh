@@ -1,35 +1,31 @@
 #!/usr/bin/env bash
+# Watchdog script for GitHub Actions CI
+# Usage: ./scripts/run_and_watch_ci.sh <branch>
+
 set -euo pipefail
 
-repo="Damien157/damo2"
-workflow="ci.yml"
-ref="${1:-main}"
+BRANCH=${1:-main}
+REPO="Damien157/damo2"
+INTERVAL=60
 
-echo "Triggering workflow '$workflow' on ref '$ref' in repo '$repo'..."
-gh workflow run "$workflow" --repo "$repo" --ref "$ref"
+echo "🔍 Watching CI for branch: $BRANCH on $REPO"
 
-echo "Waiting for the run to appear..."
-run_id=""
-for i in {1..30}; do
-  run_id=$(gh run list --repo "$repo" --workflow="$workflow" --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)
-  if [[ -n "$run_id" && "$run_id" != "null" ]]; then
-    break
+while true; do
+  echo "⏳ Checking latest workflow run..."
+  STATUS=$(gh run list --repo "$REPO" --branch "$BRANCH" --limit 1 --json status --jq '.[0].status' 2>/dev/null || echo "")
+  CONCLUSION=$(gh run list --repo "$REPO" --branch "$BRANCH" --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "")
+
+  if [[ "$STATUS" == "completed" ]]; then
+    if [[ "$CONCLUSION" == "success" ]]; then
+      echo "✅ CI passed for branch $BRANCH"
+    else
+      echo "❌ CI failed for branch $BRANCH (conclusion: $CONCLUSION)"
+    fi
+  elif [[ -z "$STATUS" ]]; then
+    echo "⚠️  No workflow runs found yet for branch $BRANCH"
+  else
+    echo "🚧 CI still running (status: $STATUS)"
   fi
-  sleep 2
+
+  sleep $INTERVAL
 done
-
-if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-  echo "ERROR: could not determine run id for workflow '$workflow'" >&2
-  exit 2
-fi
-
-echo "Found run id: $run_id"
-echo "Streaming logs (this will follow until completion)..."
-gh run watch "$run_id" --repo "$repo"
-
-echo "Fetching final status..."
-status=$(gh run view "$run_id" --repo "$repo" --json status,conclusion --jq '.status + " / " + (.conclusion // "null")')
-echo "Final status: $status"
-echo "Run details: https://github.com/${repo}/actions/runs/${run_id}"
-
-exit 0
